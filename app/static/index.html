@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BRCGS Readiness Scorer</title>
+<style>
+ body{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;color:#1b2430}
+ h1{font-size:22px} h2{font-size:16px;margin:22px 0 6px;border-bottom:1px solid #ccd;padding-bottom:4px}
+ .q{padding:8px 0;border-bottom:1px solid #eee} .q small{color:#667} .sev{font-size:11px;padding:1px 6px;border-radius:8px;background:#eef;margin-left:6px}
+ label{margin-right:12px;white-space:nowrap} button{padding:8px 16px;font-size:14px;cursor:pointer}
+ #result{margin-top:20px;padding:14px;border:1px solid #ccd;border-radius:8px;display:none}
+ .score{font-size:34px;font-weight:700} pre{white-space:pre-wrap;background:#f6f7f9;padding:10px;border-radius:6px}
+ #status{font-size:13px;color:#667}
+</style></head><body>
+<h1>BRCGS Readiness Scorer <small style="font-weight:400;color:#667">(proof of concept)</small></h1>
+<div id="status">Checking local AI…</div>
+<p><label>Site name <input id="site" value="Demo site" style="width:260px"></label></p>
+<div id="form"></div>
+<p><button id="submit">Calculate score</button></p>
+<div id="result"></div>
+<script>
+const LABELS={compliant:"Compliant",partial:"Partial",non_compliant:"Non-compliant",na:"N/A"};
+let lastId=null;
+fetch("/api/health").then(r=>r.json()).then(h=>{
+  document.getElementById("status").textContent=h.ollama?("Local AI ready (model: "+h.model+")"):"Local AI (Ollama) not running - rule-based hints will be used";
+});
+fetch("/api/questions").then(r=>r.json()).then(d=>{
+  let html="",cur=null;
+  for(const q of d.questions){
+    if(q.section!==cur){cur=q.section;html+=`<h2>${q.section}. ${d.sections[q.section]}</h2>`}
+    html+=`<div class="q"><div>${q.id} ${q.text}<span class="sev">${q.severity}</span></div><div>`+
+      Object.keys(LABELS).map(k=>`<label><input type="radio" name="${q.id}" value="${k}" ${k==="compliant"?"checked":""}> ${LABELS[k]}</label>`).join("")+`</div></div>`;
+  }
+  document.getElementById("form").innerHTML=html;
+});
+document.getElementById("submit").onclick=async()=>{
+  const answers={};
+  document.querySelectorAll("input[type=radio]:checked").forEach(i=>answers[i.name]=i.value);
+  const r=await fetch("/api/assessments",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({site_name:document.getElementById("site").value,answers})});
+  const d=await r.json(); lastId=d.id;
+  const box=document.getElementById("result"); box.style.display="block";
+  box.innerHTML=`<div class="score">${d.score}% <small>${d.band}</small></div>`+
+    `<p>Fundamental failures: ${d.fundamental_failures}</p>`+
+    "<h2>Section scores</h2>"+d.sections.map(s=>`<div>${s.section}. ${s.name}: ${s.score===null?"n/a":s.score+"%"}</div>`).join("")+
+    "<h2>Biggest gaps</h2>"+(d.gaps.slice(0,5).map(g=>`<div>[${g.id}] ${g.text} <b>(${g.severity}, -${g.lost_points})</b></div>`).join("")||"None")+
+    `<p><button id="adv">Get AI corrective-action advice</button></p><pre id="advice"></pre>`;
+  document.getElementById("adv").onclick=async()=>{
+    document.getElementById("advice").textContent="Thinking locally…";
+    const a=await (await fetch(`/api/assessments/${lastId}/advice`,{method:"POST"})).json();
+    document.getElementById("advice").textContent=`Source: ${a.source}${a.model?" ("+a.model+")":""}\n\n`+a.advice;
+  };
+};
+</script></body></html>
